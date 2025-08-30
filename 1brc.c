@@ -23,7 +23,8 @@ struct StatMap stat_map = {
     .data = {0},
 };
 
-void parse_row(char * row, size_t row_len);
+#define max(a, b) ((a > b) ? a : b)
+#define min(a, b) ((a < b) ? a : b)
 void print_stats();
 int main() {
     memset(stat_map.occupied, false, N_BUCKETS);
@@ -38,17 +39,46 @@ int main() {
     size_t line_start = buf_size;
     char buf[buf_size];
     const size_t n_lines = 10000000;
-    while (line_count < n_lines) { // TODO: parse in place
+    while (line_count < n_lines) {
         size_t n_read = fread(&buf[sizeof(buf) - line_start], 1, line_start, f);
         if (n_read == 0) {
             break;
         }
         line_start = 0;
-        for (size_t cursor = 0; cursor < sizeof(buf); cursor++) {
+        size_t delim_index = 0;
+        size_t bucket_index = 0;
+        for (size_t cursor = 0; cursor < buf_size; cursor++) {
             if (buf[cursor] == '\n') {
-                parse_row(&buf[line_start], cursor - line_start);
+                char * dig_s = &buf[delim_index + 1];
+                double dig = strtod(dig_s, NULL);
+                bucket_index = (bucket_index * 128) % N_BUCKETS;
+                if (stat_map.occupied[bucket_index]) {
+                    struct Stats current = stat_map.data[bucket_index];
+                    stat_map.data[bucket_index] = (struct Stats){
+                        .max = max(current.max, dig),
+                        .min = min(current.min, dig),
+                        .total = current.total + dig,
+                        .n = current.n + 1,
+                    };
+                } else {
+                    stat_map.data[bucket_index] = (struct Stats){
+                        .max = dig,
+                        .min = dig,
+                        .total = dig,
+                        .n = 1,
+                    };
+                    stat_map.occupied[bucket_index] = true;
+                }
+
                 line_start = cursor + 1;
                 line_count += 1;
+                delim_index = 0;
+                bucket_index = 0;
+                struct Stats current = stat_map.data[bucket_index];
+            } else if (buf[cursor] == ';') {
+                delim_index = cursor;
+            } else if (delim_index == 0) {
+                bucket_index += buf[cursor];
             }
         }
         assert(buf[line_start - 1] == '\n');
@@ -62,38 +92,6 @@ int main() {
     print_stats();
     printf("took %fms to parse %u lines\n", (end.tv_nsec - start.tv_nsec) / 1e6f, n_lines);
 }
-#define max(a, b) ((a > b) ? a : b)
-#define min(a, b) ((a < b) ? a : b)
-
-void parse_row(char * row, size_t row_len) {
-    size_t bucket_index = 0;
-    size_t i = 0;
-    for (; row[i] != ';'; i++) {
-        bucket_index += row[i];
-    }
-    bucket_index = (bucket_index * 128) % N_BUCKETS;
-    double dig = strtod(row + i + 1, NULL);
-    if (stat_map.occupied[bucket_index]) {
-        struct Stats current = stat_map.data[bucket_index];
-        stat_map.data[bucket_index] = (struct Stats){
-            .max = max(current.max, dig),
-            .min = min(current.min, dig),
-            .total = current.total + dig,
-            .n = current.n + 1,
-        };
-    } else {
-        stat_map.data[bucket_index] = (struct Stats){
-            .max = dig,
-            .min = dig,
-            .total = dig,
-            .n = 1,
-        };
-        stat_map.occupied[bucket_index] = true;
-    }
-    struct Stats current = stat_map.data[bucket_index];
-
-}
-
 
 void print_stats() {
     for (size_t bucket_index = 0; bucket_index < N_BUCKETS; bucket_index++) {
