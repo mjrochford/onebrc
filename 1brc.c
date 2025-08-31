@@ -3,12 +3,13 @@
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <time.h>
 /* #include <linux/aio_abi.h> */
 struct Stats {
-    double min;
-    double max;
-    double total;
+    float min;
+    float max;
+    float total;
     size_t n;
 };
 
@@ -20,7 +21,7 @@ struct StatMap {
 
 struct StatMap stat_map = {
     .occupied = {0},
-    .data = {0},
+    .data = {{0}},
 };
 
 #define max(a, b) ((a > b) ? a : b)
@@ -29,11 +30,7 @@ void print_stats();
 int main() {
     memset(stat_map.occupied, false, N_BUCKETS);
     FILE *f = fopen("/home/mrochford/Projects/src/1brc/1brc/measurements.txt", "r");
-    struct timespec start;
-    clockid_t cid = CLOCK_PROCESS_CPUTIME_ID;
-    if (0 != clock_gettime(cid, &start)) {
-        perror("can't get start time");
-    }
+    clock_t c_start = clock();
     size_t line_count = 0;
     const size_t buf_size = 4096;
     size_t line_start = buf_size;
@@ -50,9 +47,9 @@ int main() {
         for (size_t cursor = 0; cursor < buf_size; cursor++) {
             if (buf[cursor] == '\n') {
                 char * dig_s = &buf[delim_index + 1];
-                double dig = strtod(dig_s, NULL);
+                float dig = strtof(dig_s, NULL);
                 bucket_index = (bucket_index * 128) % N_BUCKETS;
-                if (stat_map.occupied[bucket_index]) {
+                if (!stat_map.occupied[bucket_index]) {
                     struct Stats current = stat_map.data[bucket_index];
                     stat_map.data[bucket_index] = (struct Stats){
                         .max = max(current.max, dig),
@@ -74,7 +71,6 @@ int main() {
                 line_count += 1;
                 delim_index = 0;
                 bucket_index = 0;
-                struct Stats current = stat_map.data[bucket_index];
             } else if (buf[cursor] == ';') {
                 delim_index = cursor;
             } else if (delim_index == 0) {
@@ -84,20 +80,17 @@ int main() {
         assert(buf[line_start - 1] == '\n');
         memcpy(&buf[0], &buf[line_start], sizeof(buf) - line_start);
     }
-    struct timespec end;
-    if (0 != clock_gettime(cid, &end)) {
-        perror("can't get end time");
-    }
+    clock_t c_end = clock();
 
     print_stats();
-    printf("took %fms to parse %u lines\n", (end.tv_nsec - start.tv_nsec) / 1e6f, n_lines);
+    printf("took %fs to parse %lu lines\n", (float)(c_end - c_start) / CLOCKS_PER_SEC, line_count);
 }
 
 void print_stats() {
     for (size_t bucket_index = 0; bucket_index < N_BUCKETS; bucket_index++) {
         if (stat_map.occupied[bucket_index]) {
             struct Stats current = stat_map.data[bucket_index];
-            printf("bucket: %u, max: %f, min: %f, mean: %f\n", bucket_index, current.max, current.min, current.total / current.n);
+            printf("bucket: %lu, max: %f, min: %f, mean: %f\n", bucket_index, current.max, current.min, current.total / current.n);
             printf("-------------------------\n");
         }
     }
