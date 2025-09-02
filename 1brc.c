@@ -210,17 +210,38 @@ int main(int argc, char *argv[]) {
            atomic_load(&line_count));
 }
 
+int index_sort(const void *a, void const *b) {
+    size_t bi_a = *(size_t *)a;
+    size_t bi_b = *(size_t *)b;
+    if (stat_map.occupied[bi_a] && stat_map.occupied[bi_b]) {
+        return strcmp(stat_map.names[bi_a], stat_map.names[bi_b]);
+    }
+    return INT_MAX;
+}
+
 void print_stats() {
+    size_t names_to_bucket_index[N_BUCKETS];
     size_t total_names = 0;
     for (size_t bucket_index = 0; bucket_index < N_BUCKETS; bucket_index++) {
         if (stat_map.occupied[bucket_index]) {
-            total_names += 1;
-            struct Stats current = stat_map.data[bucket_index];
-            printf("name: %s, max: %f, min: %f, mean: %f\n",
-                   stat_map.names[bucket_index], current.max, current.min,
-                   current.total / current.n);
-            printf("-------------------------\n");
+            names_to_bucket_index[total_names++] = bucket_index;
         }
     }
-    printf("total names: %lu\n", total_names);
+    qsort(names_to_bucket_index, total_names, sizeof(size_t), &index_sort);
+    printf("{");
+    for (int i = 0; i < total_names - 1; i++) {
+        size_t bucket_index = names_to_bucket_index[i];
+        struct Stats current = stat_map.data[bucket_index];
+        // "sorted alphabetically by station name, and the result values per station in the format 
+        // `<min>/<mean>/<max>`, rounded to one fractional digit"
+        // EX. {Abha=-23.0/18.0/59.2, Abidjan=-16.2/26.0/67.3,
+        //      Abéché=-10.0/29.4/69.0, Accra=-10.1/26.4/66.4,
+        //      Addis Ababa=-23.7/16.0/67.0, Adelaide=-27.8/17.3/58.5, ...}
+        printf("%s=%.1f/%.1f/%.1f, ",
+                stat_map.names[bucket_index], current.min, current.max, current.total / current.n);
+    }
+    size_t bucket_index = names_to_bucket_index[total_names - 1];
+    struct Stats current = stat_map.data[bucket_index];
+    printf("%s=%.1f/%.1f/%.1f}\n",
+            stat_map.names[bucket_index], current.min, current.max, current.total / current.n);
 }
