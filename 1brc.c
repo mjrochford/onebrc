@@ -8,9 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "queue.h"
 #include "vendor/xxHash/xxhash.h" // TODO
-/* #include <linux/aio_abi.h> */
+/* #include <linux/aio_abi.h> // TODO: does non-blocking io (iouring) improve
+ * performance over blocking io */
 struct Stats {
     float min;
     float max;
@@ -46,15 +46,11 @@ size_t stat_map_hash(char *name, size_t name_len) {
 
 // find open bucket index with linear scanning
 size_t stat_map_scan_forward(char *name, size_t name_len, size_t bucket_index) {
-    // break IF names [ bucket_index ] is null or name matches names [ bucket_index ]
     size_t count = 0;
     while (stat_map.names[bucket_index] != NULL &&
-            0 != strncmp(name, stat_map.names[bucket_index], name_len)) {
+           0 != strncmp(name, stat_map.names[bucket_index], name_len)) {
         bucket_index += 1; // TODO: quadratic scanning? geometric?
         count += 1;
-    }
-    if (count > 1) {
-        /* printf("name :%.*s: took %lu iterations to find a bucket\n", (int)name_len, name, count); */
     }
     return bucket_index;
 }
@@ -130,13 +126,22 @@ void *process_chunk(void *ud) {
 
 void print_stats();
 int main(int argc, char *argv[]) {
-    /* FILE *f = fopen("10mil.txt", "r"); */
-    /* fopen("/home/mrochford/Projects/src/1brc/1brc/measurements.txt", "r"); */
     if (argc < 2) {
         fprintf(stderr, "ERROR: Provied an input file\n");
         return 1;
     }
-    FILE *f = fopen(argv[1], "r");
+
+    char *input_file = NULL;
+    bool verbose = false;
+    for (int i = 1; i < argc; i++) {
+        if (0 == strcmp("--verbose", argv[i])) {
+            verbose = true;
+        } else {
+            input_file = argv[i];
+        }
+    }
+
+    FILE *f = fopen(input_file, "r");
     if (f == NULL) {
         fprintf(stderr, "ERROR: Failed to open %s\n", argv[1]);
         return 1;
@@ -149,7 +154,6 @@ int main(int argc, char *argv[]) {
     clock_t c_start = clock();
     const size_t n_thread = 8;
     const size_t buf_size = 4096;
-    /* const size_t n_lines = 1e7; */
     int current_worker = 0;
     char buf[n_thread][buf_size]; // TODO front and back buffers
     pthread_t threads[n_thread];
@@ -157,10 +161,9 @@ int main(int argc, char *argv[]) {
     memset(threads, (pthread_t){0}, sizeof(pthread_t) * n_thread);
     size_t line_fragment_len = 0;
     size_t total_read = 0;
-    /* while (atomic_load(&line_count) < n_lines) { */
-    size_t chunk_count = 0;
     size_t chunk_size_total = 0;
     size_t fragment_count = 0;
+    size_t chunk_count = 0;
     while (true) {
         pthread_join(threads[current_worker], NULL);
         // Read from the file offset by whatever is already in our segment
@@ -183,9 +186,6 @@ int main(int argc, char *argv[]) {
             .buf_size = chunk_size,
         };
 
-        /* printf("read %lu bytes\n", n_read); */
-        /* printf("dispatch worker %d with segment sized %lu\n", current_worker,
-         * last_newline + 1); */
         pthread_create(&threads[current_worker], NULL, process_chunk,
                        &args[current_worker]);
         chunk_count += 1;
@@ -201,13 +201,12 @@ int main(int argc, char *argv[]) {
         }
         current_worker = (current_worker + 1) % n_thread;
     }
-    /* for (int i = 0; i < n_thread; i++) */
-    /*     pthread_join(threads[i], NULL); */
     clock_t c_end = clock();
 
     print_stats();
-    printf("took %g cycles to parse %lu lines\n", (float)(c_end - c_start),
-           atomic_load(&line_count));
+    if (verbose)
+        printf("took %g cycles to parse %lu lines\n", (float)(c_end - c_start),
+               atomic_load(&line_count));
 }
 
 int index_sort(const void *a, void const *b) {
@@ -229,19 +228,24 @@ void print_stats() {
     }
     qsort(names_to_bucket_index, total_names, sizeof(size_t), &index_sort);
     printf("{");
-    for (int i = 0; i < total_names - 1; i++) {
+    for (size_t i = 0; i < total_names - 1; i++) {
         size_t bucket_index = names_to_bucket_index[i];
         struct Stats current = stat_map.data[bucket_index];
-        // "sorted alphabetically by station name, and the result values per station in the format 
+        // "sorted alphabetically by station name, and the result values per
+        // station in the format
         // `<min>/<mean>/<max>`, rounded to one fractional digit"
         // EX. {Abha=-23.0/18.0/59.2, Abidjan=-16.2/26.0/67.3,
         //      Abéché=-10.0/29.4/69.0, Accra=-10.1/26.4/66.4,
         //      Addis Ababa=-23.7/16.0/67.0, Adelaide=-27.8/17.3/58.5, ...}
-        printf("%s=%.1f/%.1f/%.1f, ",
-                stat_map.names[bucket_index], current.min, current.max, current.total / current.n);
+        printf("%s=%.1f/%.1f/%.1f, ", stat_map.names[bucket_index], current.min,
+               current.total / current.n, current.max);
     }
     size_t bucket_index = names_to_bucket_index[total_names - 1];
     struct Stats current = stat_map.data[bucket_index];
-    printf("%s=%.1f/%.1f/%.1f}\n",
-            stat_map.names[bucket_index], current.min, current.max, current.total / current.n);
+    printf("%s=%.1f/%.1f/%.1f}\n", stat_map.names[bucket_index], current.min,
+           current.total / current.n, current.max);
 }
+
+// TODO: verify this even gets the correct data
+// TODO: thread pooling rather than spawning so many
+// TODO: coroutines!
